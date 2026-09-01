@@ -13,6 +13,8 @@ namespace CtrlV.Models
         private bool _isPinned;
         private bool _isMouseOver;
         private bool _isFavoriteView;
+        private string _note = string.Empty;
+        private bool _isPrivacyMode;
 
         [JsonPropertyName("id")]
         public string Id
@@ -25,7 +27,12 @@ namespace CtrlV.Models
         public string Content
         {
             get => _content;
-            set { _content = value; OnPropertyChanged(); }
+            set
+            {
+                _content = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayContent));
+            }
         }
 
         [JsonPropertyName("timestamp")]
@@ -41,6 +48,61 @@ namespace CtrlV.Models
             get => _isPinned;
             set { _isPinned = value; OnPropertyChanged(); OnPropertyChanged(nameof(PinDisplay)); }
         }
+
+        [JsonPropertyName("note")]
+        public string Note
+        {
+            get => _note;
+            set { _note = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasNote)); OnPropertyChanged(nameof(NoteDisplay)); }
+        }
+
+        /// <summary>
+        /// 是否开启隐私模式（持久化到JSON）
+        /// </summary>
+        [JsonPropertyName("isPrivacyMode")]
+        public bool IsPrivacyMode
+        {
+            get => _isPrivacyMode;
+            set
+            {
+                _isPrivacyMode = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayContent));
+                OnPropertyChanged(nameof(PrivacyToggleIcon));
+            }
+        }
+
+        /// <summary>
+        /// 隐私模式下的显示文本。
+        /// 内容长度 ≤ 6 时直接显示；> 6 时保留前2位 + *** + 后2位。
+        /// </summary>
+        [JsonIgnore]
+        public string DisplayContent
+        {
+            get
+            {
+                if (!IsPrivacyMode || string.IsNullOrEmpty(Content))
+                    return Content ?? string.Empty;
+
+                if (Content.Length <= 6)
+                    return Content;
+
+                return $"{Content[..2]}***{Content[^2..]}";
+            }
+        }
+
+        /// <summary>
+        /// 隐私模式切换按钮图标。
+        /// 开启状态显示"👁‍🗨"，关闭状态显示"👁"。
+        /// </summary>
+        [JsonIgnore]
+        public string PrivacyToggleIcon => IsPrivacyMode ? "👁" : "👁‍🗨";
+
+        [JsonIgnore]
+        public bool HasNote => !string.IsNullOrWhiteSpace(Note);
+
+        [JsonIgnore]
+        public string NoteDisplay => HasNote ? $"备注: {Note}" : "";
 
         [JsonIgnore]
         public bool IsMouseOver

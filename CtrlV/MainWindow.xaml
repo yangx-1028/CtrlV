@@ -10,6 +10,7 @@
         Background="Transparent"
         ShowInTaskbar="False"
         Topmost="True"
+        Visibility="Collapsed"
         Closing="Window_Closing"
         Deactivated="Window_Deactivated"
         Loaded="Window_Loaded">
@@ -147,37 +148,67 @@
             <Border x:Name="FavoriteInputArea" Grid.Row="1"
                     Background="White" Padding="12,10,12,10"
                     Visibility="Collapsed">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <!-- 内容输入行 -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0" Background="#F5F5F5" CornerRadius="8"
-                            BorderBrush="#E0E0E0" BorderThickness="1" Margin="0,0,8,0">
+                        <Border Grid.Column="0" Background="#F5F5F5" CornerRadius="8"
+                                BorderBrush="#E0E0E0" BorderThickness="1" Margin="0,0,8,0">
+                            <Grid>
+                                <TextBlock x:Name="PlaceholderText"
+                                           Text="输入常用语，点击添加到收藏夹"
+                                           FontSize="13" FontFamily="Microsoft YaHei UI"
+                                           Foreground="#BBBBBB"
+                                           Padding="12,9"
+                                           VerticalAlignment="Top"
+                                           IsHitTestVisible="False"/>
+                                <TextBox x:Name="FavoriteInputBox"
+                                         FontSize="13" FontFamily="Microsoft YaHei UI"
+                                         Foreground="#333333"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="12,7"
+                                         VerticalContentAlignment="Top"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MaxHeight="120"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextChanged="FavoriteInputBox_TextChanged"/>
+                            </Grid>
+                        </Border>
+
+                        <Button Grid.Column="1" Content="添加"
+                                Style="{StaticResource AddButtonStyle}"
+                                Click="AddFavorite_Click"/>
+                    </Grid>
+
+                    <!-- 备注输入行 -->
+                    <Border Background="#F5F5F5" CornerRadius="8"
+                            BorderBrush="#E0E0E0" BorderThickness="1"
+                            Margin="0,6,0,0">
                         <Grid>
-                            <TextBlock x:Name="PlaceholderText"
-                                       Text="输入常用语，点击添加到收藏夹"
-                                       FontSize="13" FontFamily="Microsoft YaHei UI"
+                            <TextBlock x:Name="NotePlaceholderText"
+                                       Text="可选：添加备注说明用途"
+                                       FontSize="12" FontFamily="Microsoft YaHei UI"
                                        Foreground="#BBBBBB"
                                        Padding="12,0"
                                        VerticalAlignment="Center"
                                        IsHitTestVisible="False"/>
-                            <TextBox x:Name="FavoriteInputBox"
-                                     FontSize="13" FontFamily="Microsoft YaHei UI"
-                                     Foreground="#333333"
+                            <TextBox x:Name="NoteInputBox"
+                                     FontSize="12" FontFamily="Microsoft YaHei UI"
+                                     Foreground="#666666"
                                      Background="Transparent"
                                      BorderThickness="0"
-                                     Padding="12,7"
+                                     Padding="12,6"
                                      VerticalContentAlignment="Center"
-                                     TextChanged="FavoriteInputBox_TextChanged"/>
+                                     TextChanged="NoteInputBox_TextChanged"/>
                         </Grid>
                     </Border>
-
-                    <Button Grid.Column="1" Content="添加"
-                            Style="{StaticResource AddButtonStyle}"
-                            Click="AddFavorite_Click"/>
-                </Grid>
+                </StackPanel>
             </Border>
 
             <!-- ========== 内容滚动列表 ========== -->
@@ -225,18 +256,40 @@
                                     </TextBlock.Style>
                                 </TextBlock>
 
-                                <!-- 内容文本（单行显示，超长省略） -->
-                                <TextBlock Grid.Column="1"
-                                           Text="{Binding Content}"
-                                           TextTrimming="CharacterEllipsis"
-                                           TextAlignment="Left"
-                                           Foreground="#333333"
-                                           FontSize="14"
-                                           FontFamily="Microsoft YaHei UI"
-                                           MaxHeight="20"
-                                           ToolTip="{Binding Content}"
-                                           ToolTipService.ShowOnDisabled="True"
-                                           VerticalAlignment="Center"/>
+                                <!-- 内容区域 -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <!-- 内容文本（单行显示，超长省略） -->
+                                    <TextBlock x:Name="ContentTextBlock"
+                                               Text="{Binding DisplayContent}"
+                                               TextTrimming="CharacterEllipsis"
+                                               TextAlignment="Left"
+                                               Foreground="#333333"
+                                               FontSize="14"
+                                               FontFamily="Microsoft YaHei UI"
+                                               MaxHeight="20"
+                                               ToolTip="{Binding Content}"
+                                               ToolTipService.ShowOnDisabled="True"/>
+                                    <!-- 备注（仅收藏夹模式且有备注时显示） -->
+                                    <TextBlock Text="{Binding NoteDisplay}"
+                                               TextTrimming="CharacterEllipsis"
+                                               TextAlignment="Left"
+                                               Foreground="#999999"
+                                               FontSize="11"
+                                               FontFamily="Microsoft YaHei UI"
+                                               Margin="0,2,0,0"
+                                               MaxHeight="16">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasNote}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
 
                                 <!-- 操作按钮区域（悬浮显示） -->
                                 <StackPanel x:Name="CardActions"
@@ -253,7 +306,28 @@
                                                    FontFamily="Microsoft YaHei UI"
                                                    Foreground="#999999"/>
                                     </Button>
-                                    <!-- 收藏夹模式：显示取消收藏和删除按钮 -->
+                                    <!-- 收藏夹模式：隐私模式切换按钮 -->
+                                    <Button x:Name="PrivacyToggleBtn"
+                                            Style="{StaticResource CardActionButton}"
+                                            Click="PrivacyToggleButton_Click"
+                                            Foreground="#999999"
+                                            Visibility="Collapsed"
+                                            ToolTip="切换隐私模式">
+                                        <TextBlock Text="{Binding PrivacyToggleIcon}" FontSize="13"
+                                                   FontFamily="Microsoft YaHei UI"
+                                                   Foreground="#666666"/>
+                                    </Button>
+                                    <!-- 收藏夹模式：显示编辑备注、取消收藏和删除按钮 -->
+                                    <Button x:Name="EditNoteBtn"
+                                            Style="{StaticResource CardActionButton}"
+                                            Click="EditNoteButton_Click"
+                                            Foreground="#999999"
+                                            Visibility="Collapsed"
+                                            ToolTip="编辑备注">
+                                        <TextBlock Text="备注" FontSize="12"
+                                                   FontFamily="Microsoft YaHei UI"
+                                                   Foreground="#4A90D9"/>
+                                    </Button>
                                     <Button x:Name="UnpinBtn"
                                             Style="{StaticResource CardActionButton}"
                                             Click="UnpinButton_Click"
@@ -282,8 +356,13 @@
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsFavoriteView}" Value="True">
                                 <Setter TargetName="PinBtn" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="PrivacyToggleBtn" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="EditNoteBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="UnpinBtn" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="DeleteBtn" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsPrivacyMode}" Value="True">
+                                <Setter TargetName="ContentTextBlock" Property="Foreground" Value="#666666"/>
                             </DataTrigger>
                         </DataTemplate.Triggers>
                     </DataTemplate>

@@ -1,13 +1,15 @@
+# 编译产物
 bin/
 obj/
+*.cache
+
+# IDE
 .vs/
 *.user
 *.suo
-*.cache
-*.exe
-*.dll
+
+# WorkBuddy 工作区数据
+.workbuddy/
+
+# 运行时生成
 *.pdb
-.DS_Store
-Thumbs.db
-*.swp
-*~

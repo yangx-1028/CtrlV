@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Input;
@@ -32,8 +33,23 @@ namespace CtrlV
             MaxCountBox.Text = _settings.MaxHistoryCount.ToString();
             AutoStartCheckBox.IsChecked = _settings.AutoStart;
 
+            // 初始化内存提醒设置
+            MemoryAlertCheckBox.IsChecked = _settings.MemoryAlertEnabled;
+            MemoryThresholdBox.Text = _settings.MemoryAlertThreshold.ToString();
+            UpdateMemoryThresholdEnabled();
+
             // 初始化快捷键设置
             InitHotkeyControls();
+        }
+
+        private void MemoryAlertCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateMemoryThresholdEnabled();
+        }
+
+        private void UpdateMemoryThresholdEnabled()
+        {
+            MemoryThresholdBox.IsEnabled = MemoryAlertCheckBox.IsChecked == true;
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -107,6 +123,17 @@ namespace CtrlV
             }
             _settings.AutoStart = AutoStartCheckBox.IsChecked == true;
 
+            // 保存内存提醒设置（阈值限制在 10~99）
+            _settings.MemoryAlertEnabled = MemoryAlertCheckBox.IsChecked == true;
+            if (int.TryParse(MemoryThresholdBox.Text, out int threshold))
+            {
+                _settings.MemoryAlertThreshold = Math.Clamp(threshold, 10, 99);
+            }
+            else
+            {
+                _settings.MemoryAlertThreshold = 90;
+            }
+
             // 保存快捷键设置
             SaveHotkeySettings();
 
@@ -160,16 +187,22 @@ namespace CtrlV
 
                 if (enable)
                 {
-                    key.SetValue("CtrlV", System.Reflection.Assembly.GetExecutingAssembly().Location);
+                    // 使用 Environment.ProcessPath 获取可执行文件路径
+                    // .NET 6+ 推荐方式，兼容单文件发布
+                    var exePath = Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                    if (!string.IsNullOrEmpty(exePath))
+                    {
+                        key.SetValue("CtrlV", $"\"{exePath}\"");
+                    }
                 }
                 else
                 {
                     key.DeleteValue("CtrlV", false);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // 注册表操作失败，静默处理
+                System.Diagnostics.Debug.WriteLine($"设置开机自启失败: {ex.Message}");
             }
         }
     }

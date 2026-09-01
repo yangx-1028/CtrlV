@@ -60,6 +60,25 @@
                               Content="开机自动启动" FontSize="14" Foreground="#2C3E50"
                               FontFamily="Microsoft YaHei UI" Margin="0,0,0,12"/>
 
+                    <!-- 内存占用提醒 -->
+                    <StackPanel Margin="0,0,0,12">
+                        <CheckBox x:Name="MemoryAlertCheckBox"
+                                  Content="内存占用过高时托盘图标闪烁提醒" FontSize="14" Foreground="#2C3E50"
+                                  FontFamily="Microsoft YaHei UI" Margin="0,0,0,6"
+                                  Checked="MemoryAlertCheckBox_Changed" Unchecked="MemoryAlertCheckBox_Changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
+                            <TextBlock Text="报警阈值：" VerticalAlignment="Center" FontSize="13"
+                                       Foreground="#2C3E50" FontFamily="Microsoft YaHei UI"/>
+                            <TextBox x:Name="MemoryThresholdBox" Width="56" Height="28" FontSize="13"
+                                     FontFamily="Microsoft YaHei UI"
+                                     VerticalContentAlignment="Center" Padding="6,2"
+                                     BorderBrush="#E8E8E8" BorderThickness="1"
+                                     ToolTip="内存占用百分比，达到该值时图标变红闪烁（10~99）"/>
+                            <TextBlock Text=" %" VerticalAlignment="Center" FontSize="13"
+                                       Foreground="#7F8C8D" FontFamily="Microsoft YaHei UI"/>
+                        </StackPanel>
+                    </StackPanel>
+
                     <!-- 快捷键设置 -->
                     <StackPanel Margin="0,0,0,12">
                         <TextBlock Text="快捷键设置" FontSize="14" Foreground="#2C3E50"

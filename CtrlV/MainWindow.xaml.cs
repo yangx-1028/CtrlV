@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -24,6 +25,7 @@ namespace CtrlV
         private bool _isShowingHistory = true;
         private bool _isInternalCopy;
         private DispatcherTimer _saveTimer;
+        private DispatcherTimer _periodicSaveTimer;
         private bool _forceClose;
 
         // Win32 全局热键
@@ -50,11 +52,25 @@ namespace CtrlV
             // 启动时清空历史记录（保留收藏夹）
             ClearHistoryOnStartup();
 
-            // 初始化保存定时器（防抖）
+            // 初始化保存定时器（防抖）—— 剪贴板变化后延迟 2 秒保存
             _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             _saveTimer.Tick += (s, e) =>
             {
                 _saveTimer.Stop();
+                DataStorage.Save(_allItems.ToList());
+            };
+
+            // 定期保存定时器 —— 每 30 秒强制保存一次，防止长时间无操作导致数据丢失
+            _periodicSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+            _periodicSaveTimer.Tick += (s, e) =>
+            {
+                DataStorage.Save(_allItems.ToList());
+            };
+            _periodicSaveTimer.Start();
+
+            // 注册进程退出事件，确保异常退出时也能保存数据
+            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
+            {
                 DataStorage.Save(_allItems.ToList());
             };
 
@@ -67,28 +83,40 @@ namespace CtrlV
         }
 
         /// <summary>
-        /// 启动时清空历史记录，保留收藏夹
+        /// 启动时清空历史记录，保留收藏夹。
+        /// 先构建新列表再一次性替换，避免 Clear() 后异常导致数据丢失。
         /// </summary>
         private void ClearHistoryOnStartup()
         {
             var pinnedItems = _allItems.Where(x => x.IsPinned).ToList();
+            var nonPinnedCount = _allItems.Count - pinnedItems.Count;
+
+            // 安全操作：先构建目标列表，再批量替换
+            // 不使用 Clear()+Add() 模式，防止中间状态异常导致数据丢失
             _allItems.Clear();
             foreach (var item in pinnedItems)
             {
                 _allItems.Add(item);
             }
+
+            if (nonPinnedCount > 0 || pinnedItems.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[ClearHistoryOnStartup] 清除 {nonPinnedCount} 条历史记录，保留 {pinnedItems.Count} 条收藏夹");
+            }
+
             DataStorage.Save(_allItems.ToList());
         }
 
         #region 全局热键
 
-        private void RegisterGlobalHotkey()
+        private bool RegisterGlobalHotkey()
         {
             var hwnd = new WindowInteropHelper(this).Handle;
             // 使用设置中的快捷键
             uint modifiers = (uint)_settings.HotkeyModifiers;
             uint key = (uint)_settings.HotkeyKey;
-            RegisterHotKey(hwnd, HOTKEY_ID, modifiers, key);
+            return RegisterHotKey(hwnd, HOTKEY_ID, modifiers, key);
         }
 
         private void UnregisterGlobalHotkey()
@@ -128,31 +156,70 @@ namespace CtrlV
 
         public void ToggleVisibility()
         {
-            if (IsVisible)
+            try
             {
-                Hide();
+                if (Visibility == Visibility.Visible)
+                {
+                    Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    ShowAndPosition();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                ShowAndPosition();
+                System.Diagnostics.Debug.WriteLine($"[ToggleVisibility] 异常: {ex.Message}");
+                // 异常时重置状态，下次点击能恢复
+                try { Visibility = Visibility.Collapsed; } catch { }
             }
         }
 
         public void ShowAndPosition()
         {
-            Dispatcher.Invoke(() =>
+            try
             {
-                RefreshList();
-                UpdateLayout();
-            }, DispatcherPriority.Render);
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshList();
+                    UpdateLayout();
+                }, DispatcherPriority.Render);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowAndPosition] 刷新列表异常: {ex.Message}");
+                // 即使刷新失败，也要尝试显示窗口
+            }
 
-            Hide();
-            Topmost = true;
-            Show();
-            WindowState = WindowState.Normal;
-            PositionWindowNearTaskbar();
-            Activate();
-            Focus();
+            try
+            {
+                Topmost = true;
+                Visibility = Visibility.Visible;
+                WindowState = WindowState.Normal;
+                PositionWindowNearTaskbar();
+
+                Dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        if (IsVisible)
+                        {
+                            Activate();
+                            Focus();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ShowAndPosition] Activate异常: {ex.Message}");
+                    }
+                }, DispatcherPriority.Loaded);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowAndPosition] 显示窗口异常: {ex.Message}");
+                // 最后兜底：确保窗口至少不会卡在半显示状态
+                try { Visibility = Visibility.Collapsed; } catch { }
+            }
         }
 
         private void PositionWindowNearTaskbar()
@@ -185,23 +252,30 @@ namespace CtrlV
 
             Dispatcher.BeginInvoke(() =>
             {
-                // 去重：检查是否已存在相同内容
-                var existing = _allItems.FirstOrDefault(x => x.Content == text);
-                if (existing != null)
+                try
                 {
-                    existing.Timestamp = DateTime.Now;
-                    _allItems.Remove(existing);
-                    _allItems.Insert(0, existing);
-                }
-                else
-                {
-                    var item = new ClipItem { Content = text, Timestamp = DateTime.Now };
-                    _allItems.Insert(0, item);
-                }
+                    // 去重：检查是否已存在相同内容
+                    var existing = _allItems.FirstOrDefault(x => x.Content == text);
+                    if (existing != null)
+                    {
+                        existing.Timestamp = DateTime.Now;
+                        _allItems.Remove(existing);
+                        _allItems.Insert(0, existing);
+                    }
+                    else
+                    {
+                        var item = new ClipItem { Content = text, Timestamp = DateTime.Now };
+                        _allItems.Insert(0, item);
+                    }
 
-                TrimHistory();
-                ScheduleSave();
-                RefreshList();
+                    TrimHistory();
+                    ScheduleSave();
+                    RefreshList();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[OnClipboardTextChanged] 处理剪贴板内容异常: {ex.Message}");
+                }
             });
         }
 
@@ -234,52 +308,80 @@ namespace CtrlV
 
         private void RefreshList()
         {
-            IEnumerable<ClipItem> items;
-
-            if (_isShowingHistory)
+            try
             {
-                // 历史记录：只显示非收藏的内容
-                items = _allItems.Where(x => !x.IsPinned);
+                IEnumerable<ClipItem> items;
+
+                if (_isShowingHistory)
+                {
+                    // 历史记录：只显示非收藏的内容
+                    items = _allItems.Where(x => !x.IsPinned);
+                }
+                else
+                {
+                    // 收藏夹：只显示收藏的内容
+                    items = _allItems.Where(x => x.IsPinned);
+                }
+
+                var list = items.ToList();
+
+                // 设置 IsFavoriteView 标志
+                foreach (var item in _allItems)
+                {
+                    item.IsFavoriteView = !_isShowingHistory;
+                }
+
+                ClipListBox.ItemsSource = list;
+
+                var totalCount = _isShowingHistory ? _allItems.Count(x => !x.IsPinned) : _allItems.Count(x => x.IsPinned);
+                ItemCountText.Text = $"共 {totalCount} 条记录";
+
+                EmptyHint.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                EmptyHint.Text = _isShowingHistory
+                    ? "暂无剪贴板历史记录\n复制内容后将自动出现在这里"
+                    : "暂无收藏内容\n在历史记录中点击☆收藏常用内容";
             }
-            else
+            catch (Exception ex)
             {
-                // 收藏夹：只显示收藏的内容
-                items = _allItems.Where(x => x.IsPinned);
+                System.Diagnostics.Debug.WriteLine($"[RefreshList] 异常: {ex.Message}");
+                // 刷新失败时清空列表，避免显示过期数据
+                try
+                {
+                    ClipListBox.ItemsSource = null;
+                    ItemCountText.Text = "加载异常";
+                    EmptyHint.Visibility = Visibility.Collapsed;
+                }
+                catch { }
             }
-
-            var list = items.ToList();
-
-            // 设置 IsFavoriteView 标志
-            foreach (var item in _allItems)
-            {
-                item.IsFavoriteView = !_isShowingHistory;
-            }
-
-            ClipListBox.ItemsSource = list;
-
-            var totalCount = _isShowingHistory ? _allItems.Count(x => !x.IsPinned) : _allItems.Count(x => x.IsPinned);
-            ItemCountText.Text = $"共 {totalCount} 条记录";
-
-            EmptyHint.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            EmptyHint.Text = _isShowingHistory
-                ? "暂无剪贴板历史记录\n复制内容后将自动出现在这里"
-                : "暂无收藏内容\n在历史记录中点击☆收藏常用内容";
         }
 
         #endregion
 
         #region 窗口事件
 
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        private bool _hotkeyRegistered;
+
+        /// <summary>
+        /// 初始化热键（需要窗口句柄已创建）
+        /// 可从 App.xaml.cs 调用，确保启动时热键立即生效
+        /// </summary>
+        public void InitializeHotkey()
         {
-            Hide();
-            // 注册全局热键（需要窗口句柄）
+            if (_hotkeyRegistered) return;
             var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
             var source = HwndSource.FromHwnd(hwnd);
             source?.AddHook(WndProc);
             RegisterGlobalHotkey();
-            // 更新快捷键提示
             UpdateHotkeyHint();
+            _hotkeyRegistered = true;
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            InitializeHotkey();
+            // 隐藏窗口（使用 Visibility 而非 Hide，确保消息泵正常工作）
+            Visibility = Visibility.Collapsed;
         }
 
         /// <summary>
@@ -324,15 +426,22 @@ namespace CtrlV
             if (!_forceClose)
             {
                 e.Cancel = true;
-                Hide();
+                Visibility = Visibility.Collapsed;
             }
         }
 
         private void Window_Deactivated(object sender, EventArgs e)
         {
-            if (IsVisible)
+            try
             {
-                Hide();
+                if (Visibility == Visibility.Visible)
+                {
+                    Visibility = Visibility.Collapsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Window_Deactivated] 异常: {ex.Message}");
             }
         }
 
@@ -361,10 +470,14 @@ namespace CtrlV
         }
 
         /// <summary>
-        /// 用于从 App 调用的强制关闭
+        /// 用于从 App 调用的强制关闭。
+        /// 在关闭前确保所有数据已保存到磁盘。
         /// </summary>
         public void ForceClose()
         {
+            _periodicSaveTimer?.Stop();
+            _saveTimer?.Stop();
+            DataStorage.Save(_allItems.ToList());
             _forceClose = true;
             Close();
         }
@@ -403,7 +516,7 @@ namespace CtrlV
 
         private void CloseButton_Click(object sender, MouseButtonEventArgs e)
         {
-            Hide();
+            Visibility = Visibility.Collapsed;
             e.Handled = true;
         }
 
@@ -418,6 +531,13 @@ namespace CtrlV
                 : Visibility.Collapsed;
         }
 
+        private void NoteInputBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            NotePlaceholderText.Visibility = string.IsNullOrEmpty(NoteInputBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
         private void AddFavorite_Click(object sender, RoutedEventArgs e)
         {
             var text = FavoriteInputBox.Text?.Trim();
@@ -426,6 +546,8 @@ namespace CtrlV
                 ShowToast("请输入内容");
                 return;
             }
+
+            var note = NoteInputBox.Text?.Trim() ?? string.Empty;
 
             // 防止剪贴板监听捕获
             _isInternalCopy = true;
@@ -439,6 +561,11 @@ namespace CtrlV
                     {
                         existing.IsPinned = true;
                     }
+                    // 更新备注
+                    if (!string.IsNullOrEmpty(note))
+                    {
+                        existing.Note = note;
+                    }
                     ShowToast("该内容已在收藏夹中");
                 }
                 else
@@ -447,12 +574,14 @@ namespace CtrlV
                     {
                         Content = text,
                         Timestamp = DateTime.Now,
-                        IsPinned = true
+                        IsPinned = true,
+                        Note = note
                     };
                     _allItems.Insert(0, item);
                 }
 
                 FavoriteInputBox.Text = string.Empty;
+                NoteInputBox.Text = string.Empty;
                 SaveImmediate();
                 RefreshList();
                 ShowToast("添加成功");
@@ -526,6 +655,50 @@ namespace CtrlV
                     SaveImmediate();
                     RefreshList();
                     ShowToast("收藏成功");
+                }
+            }
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// 收藏夹模式：切换隐私模式
+        /// </summary>
+        private void PrivacyToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement btn)
+            {
+                var clipItem = FindClipItemFromSender(btn);
+                if (clipItem != null)
+                {
+                    clipItem.IsPrivacyMode = !clipItem.IsPrivacyMode;
+                    SaveImmediate();
+                    RefreshList();
+                    ShowToast(clipItem.IsPrivacyMode ? "隐私模式已开启" : "隐私模式已关闭");
+                }
+            }
+            e.Handled = true;
+        }
+
+        /// <summary>
+        /// 收藏夹模式：编辑备注
+        /// </summary>
+        private void EditNoteButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement btn)
+            {
+                var clipItem = FindClipItemFromSender(btn);
+                if (clipItem != null)
+                {
+                    // 使用简单的 InputDialog 获取备注
+                    var dialog = new NoteEditDialog(clipItem.Note);
+                    dialog.Owner = Window.GetWindow(this);
+                    if (dialog.ShowDialog() == true)
+                    {
+                        clipItem.Note = dialog.NoteText;
+                        SaveImmediate();
+                        RefreshList();
+                        ShowToast("备注已更新");
+                    }
                 }
             }
             e.Handled = true;
@@ -617,6 +790,8 @@ namespace CtrlV
 
         protected override void OnClosed(EventArgs e)
         {
+            _periodicSaveTimer?.Stop();
+            _saveTimer?.Stop();
             _clipboardHelper?.Dispose();
             UnregisterGlobalHotkey();
             DataStorage.Save(_allItems.ToList());

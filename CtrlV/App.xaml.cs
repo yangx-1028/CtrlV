@@ -14,6 +14,7 @@ namespace CtrlV
         private MainWindow? _mainWindow;
         private NotifyIcon? _notifyIcon;
         private ContextMenuStrip? _contextMenu;
+        private Services.MemoryMonitor? _memoryMonitor;
 
         [DllImport("shell32.dll", SetLastError = true)]
         private static extern bool Shell_NotifyIcon(uint dwMessage, ref NOTIFYICONDATA lpData);
@@ -50,7 +51,14 @@ namespace CtrlV
         private void Application_Startup(object sender, StartupEventArgs e)
         {
             CreateTrayIcon();
+            InitMemoryMonitor();
             _mainWindow = new MainWindow();
+            // 强制创建窗口句柄但不显示，确保热键在启动时就注册
+            var helper = new System.Windows.Interop.WindowInteropHelper(_mainWindow);
+            helper.EnsureHandle();
+            _mainWindow.InitializeHotkey();
+            // 确保启动时窗口隐藏
+            _mainWindow.Visibility = System.Windows.Visibility.Collapsed;
             ShowFirstRunTip();
         }
 
@@ -162,29 +170,34 @@ namespace CtrlV
 
         private Icon CreateBlueCircleIcon()
         {
-            using var bmp = new Bitmap(32, 32);
-            using var g = Graphics.FromImage(bmp);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
+            // 复用 MemoryMonitor 的图标绘制（同款白对勾圆形，减少重复代码）
+            return Services.MemoryMonitor.CreateCircleIcon(74, 144, 217, 255);
+        }
 
-            using var brush = new SolidBrush(Color.FromArgb(74, 144, 217));
-            g.FillEllipse(brush, 1, 1, 30, 30);
+        private void InitMemoryMonitor()
+        {
+            _memoryMonitor = new Services.MemoryMonitor(
+                setIcon: icon => { if (_notifyIcon != null) _notifyIcon.Icon = icon; },
+                showBalloon: (title, text, duration) =>
+                    _notifyIcon?.ShowBalloonTip(duration, title, text, ToolTipIcon.Warning));
 
-            using var pen = new Pen(Color.White, 3f);
-            pen.StartCap = LineCap.Round;
-            pen.EndCap = LineCap.Round;
-            g.DrawLines(pen, new[]
+            // 只有功能启用时才启动定时器，未启用则完全零开销
+            var settings = Services.SettingsManager.Load();
+            if (settings.MemoryAlertEnabled)
             {
-                new PointF(8f, 10f),
-                new PointF(16f, 22f),
-                new PointF(24f, 10f)
-            });
+                _memoryMonitor.Start(settings.MemoryAlertThreshold);
+            }
+        }
 
-            IntPtr hIcon = bmp.GetHicon();
-            var icon = Icon.FromHandle(hIcon);
-            var result = (Icon)icon.Clone();
-            icon.Dispose();
-            return result;
+        /// <summary>设置窗口关闭后调用：按最新设置启停内存监控</summary>
+        private void ApplyMemoryAlertSettings()
+        {
+            if (_memoryMonitor == null) return;
+            var settings = Services.SettingsManager.Load();
+            if (settings.MemoryAlertEnabled)
+                _memoryMonitor.Start(settings.MemoryAlertThreshold);
+            else
+                _memoryMonitor.Stop();
         }
 
         private void ShowSettings()
@@ -194,22 +207,43 @@ namespace CtrlV
             settingsWin.ShowDialog();
             // 设置窗口关闭后，重新注册快捷键
             _mainWindow?.ReRegisterHotkey();
+            // 按最新设置启停内存监控
+            ApplyMemoryAlertSettings();
         }
 
         private void ExitApp()
         {
-            if (_notifyIcon != null)
+            try
             {
-                _notifyIcon.Visible = false;
-                _notifyIcon.Dispose();
+                // 释放顺序很重要：
+                // 1. 先停监控定时器（闪烁定时器若在跑也一并停掉）
+                _memoryMonitor?.Stop();
+                // 2. 再释放 NotifyIcon（它 Dispose 内部还会访问当前 Icon，必须趁图标还活着先放它走）
+                if (_notifyIcon != null)
+                {
+                    _notifyIcon.Visible = false;
+                    _notifyIcon.Dispose();
+                }
+                // 3. 最后才销毁 MemoryMonitor 持有的图标资源
+                _memoryMonitor?.Dispose();
+
+                _mainWindow?.ForceClose();
             }
-            _mainWindow?.ForceClose();
-            Shutdown();
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"退出清理异常: {ex.Message}");
+            }
+            finally
+            {
+                Shutdown();
+            }
         }
 
         private void Application_Exit(object sender, ExitEventArgs e)
         {
-            _notifyIcon?.Dispose();
+            // 兜底：ExitApp 已正常清理时这里都是空操作；异常路径下也不能再抛
+            try { _notifyIcon?.Dispose(); } catch { }
+            try { _memoryMonitor?.Dispose(); } catch { }
         }
     }
 }

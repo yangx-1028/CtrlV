@@ -14,10 +14,16 @@ namespace CtrlV.Services
         public bool AutoStart { get; set; } = false;
 
         [JsonPropertyName("hotkeyModifiers")]
-        public int HotkeyModifiers { get; set; } = 0x0001 | 0x0004; // Ctrl+Alt
+        public int HotkeyModifiers { get; set; } = 0x0002 | 0x0001; // Ctrl+Alt
 
         [JsonPropertyName("hotkeyKey")]
         public int HotkeyKey { get; set; } = 0x56; // V
+
+        [JsonPropertyName("memoryAlertEnabled")]
+        public bool MemoryAlertEnabled { get; set; } = false;
+
+        [JsonPropertyName("memoryAlertThreshold")]
+        public int MemoryAlertThreshold { get; set; } = 90;
     }
 
     public static class SettingsManager
